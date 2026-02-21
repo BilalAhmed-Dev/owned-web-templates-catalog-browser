@@ -1,0 +1,465 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { getCollection } from 'astro:content';
+
+type TemplateCard = {
+	title: string;
+	framework: 'nextjs' | 'html' | 'wordpress' | 'other';
+	tech: string[];
+	coverUrl: string;
+	href: string;
+	addedAtMs: number;
+};
+
+const templates = await getCollection('templates');
+const frameworkOptions: TemplateCard['framework'][] = ['nextjs', 'html', 'wordpress', 'other'];
+
+const coverAssets = import.meta.glob('/src/content/templates/**/*', {
+	eager: true,
+	import: 'default',
+	query: '?url',
+}) as Record<string, string>;
+
+const frameworkLabel: Record<TemplateCard['framework'], string> = {
+	nextjs: 'Next.js',
+	html: 'HTML',
+	wordpress: 'WordPress',
+	other: 'Other',
+};
+
+const cards: TemplateCard[] = templates
+	.map((entry) => {
+		const parts = entry.id.split('/');
+		const fileStem = parts.at(-1) ?? '';
+		const folder = parts.slice(0, -1).join('/');
+		const slug = fileStem === 'entry' && folder ? folder : entry.id;
+		const normalizedCover = entry.data.cover.replace(/^\.\//, '');
+		const coverKey = `/src/content/templates/${folder}/${normalizedCover}`;
+		const coverUrl = coverAssets[coverKey] ?? entry.data.cover;
+
+		return {
+			title: entry.data.title,
+			framework: entry.data.framework,
+			tech: entry.data.tech,
+			coverUrl,
+			href: `/templates/${slug}`,
+			addedAtMs: entry.data.addedAt ? entry.data.addedAt.getTime() : 0,
+		};
+	})
+	.sort((a, b) => a.title.localeCompare(b.title));
+
+const techOptions = [...new Set(cards.flatMap((card) => card.tech))].sort((a, b) =>
+	a.localeCompare(b)
+);
+---
+
+<StarlightPage frontmatter={{ title: 'Templates', template: 'splash' }} hasSidebar={false}>
+	<div class="layout">
+		<aside class="filters" aria-label="Template filters">
+			<form id="template-filters">
+				<fieldset>
+					<legend>Framework</legend>
+					{frameworkOptions.map((framework) => (
+						<label class="filter-option">
+							<input type="checkbox" name="framework" value={framework} />
+							<span>{frameworkLabel[framework]}</span>
+						</label>
+					))}
+				</fieldset>
+
+				<fieldset>
+					<legend>Tech</legend>
+					{techOptions.map((tech) => (
+						<label class="filter-option">
+							<input type="checkbox" name="tech" value={tech} />
+							<span>{tech}</span>
+						</label>
+					))}
+				</fieldset>
+			</form>
+		</aside>
+
+		<section class="content" aria-label="Templates catalog">
+			<div class="toolbar">
+				<p id="result-count" class="result-count"></p>
+				<div class="toolbar-actions">
+					<label class="sort-label">
+						<span>Sort</span>
+						<select id="sort-select" name="sort">
+							<option value="newest">Newest</option>
+							<option value="title">Title (A-Z)</option>
+						</select>
+					</label>
+					<button id="clear-filters" type="button" class="clear-filters">Clear filters</button>
+				</div>
+			</div>
+			<div id="active-filters" class="active-filters" aria-live="polite"></div>
+			<section class="template-grid">
+				{cards.map((card) => (
+					<a
+						class="template-card sl-link-button"
+						href={card.href}
+						data-framework={card.framework}
+						data-tech={card.tech.join('\u001f')}
+						data-title={card.title.toLowerCase()}
+						data-added-at={String(card.addedAtMs)}
+					>
+						<img src={card.coverUrl} alt={`${card.title} cover`} loading="lazy" />
+						<div class="template-card__body">
+							<div class="template-card__meta">
+								<h2>{card.title}</h2>
+								<span class="framework-badge">{frameworkLabel[card.framework]}</span>
+							</div>
+							<div class="chip-row">
+								{card.tech.map((tech) => (
+									<span class="chip">{tech}</span>
+								))}
+							</div>
+						</div>
+					</a>
+				))}
+			</section>
+			<p id="empty-state" class="empty-state" hidden>No templates match the selected filters.</p>
+		</section>
+	</div>
+	<script>
+		const form = document.querySelector('#template-filters');
+		const cards = Array.from(document.querySelectorAll('.template-card'));
+		const resultCount = document.querySelector('#result-count');
+		const emptyState = document.querySelector('#empty-state');
+		const sortSelect = document.querySelector('#sort-select');
+		const clearFiltersButton = document.querySelector('#clear-filters');
+		const activeFilters = document.querySelector('#active-filters');
+
+		if (form && resultCount && emptyState && sortSelect && clearFiltersButton && activeFilters) {
+			const frameworkLabels = {
+				nextjs: 'Next.js',
+				html: 'HTML',
+				wordpress: 'WordPress',
+				other: 'Other',
+			};
+
+			const syncFromUrl = () => {
+				const params = new URLSearchParams(window.location.search);
+				for (const input of form.querySelectorAll('input[type="checkbox"]')) {
+					input.checked = params.getAll(input.name).includes(input.value);
+				}
+				const sort = params.get('sort');
+				sortSelect.value = sort === 'title' ? 'title' : 'newest';
+			};
+
+			const getSelected = () => {
+				const selectedFrameworks = new Set(
+					Array.from(form.querySelectorAll('input[name="framework"]:checked')).map(
+						(input) => input.value
+					)
+				);
+				const selectedTech = new Set(
+					Array.from(form.querySelectorAll('input[name="tech"]:checked')).map(
+						(input) => input.value
+					)
+				);
+				const sort = sortSelect.value === 'title' ? 'title' : 'newest';
+				return { selectedFrameworks, selectedTech, sort };
+			};
+
+			const updateUrl = () => {
+				const { selectedFrameworks, selectedTech, sort } = getSelected();
+				const params = new URLSearchParams();
+				for (const framework of selectedFrameworks) params.append('framework', framework);
+				for (const tech of selectedTech) params.append('tech', tech);
+				params.set('sort', sort);
+				const query = params.toString();
+				const target = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+				window.history.replaceState({}, '', target);
+			};
+
+			const sortCards = (sort) => {
+				const compareTitle = (a, b) =>
+					(a.dataset.title ?? '').localeCompare(b.dataset.title ?? '');
+				const compareNewest = (a, b) => {
+					const aTime = Number.parseInt(a.dataset.addedAt ?? '0', 10);
+					const bTime = Number.parseInt(b.dataset.addedAt ?? '0', 10);
+					if (aTime !== bTime) return bTime - aTime;
+					return compareTitle(a, b);
+				};
+				const sorted = [...cards].sort(sort === 'title' ? compareTitle : compareNewest);
+				const grid = document.querySelector('.template-grid');
+				if (!grid) return;
+				for (const card of sorted) grid.append(card);
+			};
+
+			const renderActiveFilters = (selectedFrameworks, selectedTech) => {
+				activeFilters.textContent = '';
+				const createChip = (name, value, label) => {
+					const button = document.createElement('button');
+					button.type = 'button';
+					button.className = 'active-chip';
+					button.dataset.name = name;
+					button.dataset.value = value;
+					button.textContent = `${label} ×`;
+					return button;
+				};
+				for (const framework of selectedFrameworks) {
+					activeFilters.append(createChip('framework', framework, frameworkLabels[framework] ?? framework));
+				}
+				for (const tech of selectedTech) {
+					activeFilters.append(createChip('tech', tech, tech));
+				}
+				activeFilters.hidden = activeFilters.childElementCount === 0;
+			};
+
+			const applyFilters = () => {
+				const { selectedFrameworks, selectedTech, sort } = getSelected();
+				sortCards(sort);
+				let visibleCount = 0;
+
+				for (const card of cards) {
+					const framework = card.dataset.framework ?? '';
+					const techList = (card.dataset.tech ?? '')
+						.split('\u001f')
+						.map((value) => value.trim())
+						.filter(Boolean);
+					const techSet = new Set(techList);
+
+					const frameworkPass =
+						selectedFrameworks.size === 0 || selectedFrameworks.has(framework);
+					const techPass =
+						selectedTech.size === 0 ||
+						Array.from(selectedTech).every((tech) => techSet.has(tech));
+					const visible = frameworkPass && techPass;
+
+					card.hidden = !visible;
+					if (visible) visibleCount += 1;
+				}
+
+				resultCount.textContent = `${visibleCount} templates`;
+				emptyState.hidden = visibleCount !== 0;
+				renderActiveFilters(selectedFrameworks, selectedTech);
+			};
+
+			syncFromUrl();
+			applyFilters();
+
+			form.addEventListener('change', () => {
+				updateUrl();
+				applyFilters();
+			});
+
+			sortSelect.addEventListener('change', () => {
+				updateUrl();
+				applyFilters();
+			});
+
+			clearFiltersButton.addEventListener('click', () => {
+				for (const input of form.querySelectorAll('input[type="checkbox"]')) {
+					input.checked = false;
+				}
+				updateUrl();
+				applyFilters();
+			});
+
+			activeFilters.addEventListener('click', (event) => {
+				const target = event.target;
+				if (!(target instanceof HTMLButtonElement) || !target.classList.contains('active-chip')) {
+					return;
+				}
+				const name = target.dataset.name;
+				const value = target.dataset.value;
+				if (!name || !value) return;
+				const input = form.querySelector(`input[name="${name}"][value="${value}"]`);
+				if (input) {
+					input.checked = false;
+					updateUrl();
+					applyFilters();
+				}
+			});
+		}
+	</script>
+</StarlightPage>
+
+<style>
+	.layout {
+		display: grid;
+		grid-template-columns: 14rem minmax(0, 1fr);
+		gap: 1.2rem;
+		margin-top: 0.6rem;
+	}
+
+	.filters {
+		border: 1px solid var(--sl-color-gray-5);
+		padding: 0.9rem;
+		height: fit-content;
+	}
+
+	.filters form {
+		display: grid;
+		gap: 1rem;
+	}
+
+	fieldset {
+		border: 0;
+		padding: 0;
+		margin: 0;
+		display: grid;
+		gap: 0.45rem;
+	}
+
+	legend {
+		font-size: 0.9rem;
+		font-weight: 600;
+		margin-bottom: 0.45rem;
+	}
+
+	.filter-option {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		font-size: 0.88rem;
+	}
+
+	.content {
+		min-width: 0;
+	}
+
+	.toolbar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.6rem;
+	}
+
+	.toolbar-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+
+	.sort-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		font-size: 0.85rem;
+	}
+
+	.sort-label select {
+		min-width: 9.5rem;
+	}
+
+	.clear-filters {
+		padding: 0.35rem 0.55rem;
+		border: 1px solid var(--sl-color-gray-4);
+		background: var(--sl-color-black);
+		color: var(--sl-color-text);
+		font-size: 0.8rem;
+		cursor: pointer;
+	}
+
+	.result-count {
+		margin: 0;
+		font-size: 0.85rem;
+		color: var(--sl-color-gray-2);
+	}
+
+	.active-filters {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.45rem;
+		margin-top: 0.65rem;
+	}
+
+	.active-chip {
+		border: 1px solid var(--sl-color-gray-4);
+		background: var(--sl-color-gray-6);
+		color: var(--sl-color-white);
+		font-size: 0.75rem;
+		line-height: 1;
+		padding: 0.3rem 0.5rem;
+		cursor: pointer;
+	}
+
+	.empty-state {
+		margin-top: 0.8rem;
+		font-size: 0.9rem;
+		color: var(--sl-color-gray-2);
+	}
+
+	.template-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+		gap: 0.75rem;
+		margin-top: 0.75rem;
+	}
+
+	.template-card {
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+		padding: 0;
+		border: 1px solid var(--sl-color-gray-5);
+		background: var(--sl-color-black);
+		text-decoration: none;
+	}
+
+	.template-card img {
+		display: block;
+		width: 100%;
+		height: 8.75rem;
+		object-fit: cover;
+		border-bottom: 1px solid var(--sl-color-gray-5);
+	}
+
+	.template-card__body {
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+		padding: 0.7rem;
+	}
+
+	.template-card__meta {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+
+	.template-card__meta h2 {
+		margin: 0;
+		font-size: 1.2rem;
+		line-height: 1.35;
+	}
+
+	.framework-badge {
+		white-space: nowrap;
+		font-size: 0.75rem;
+		padding: 0.2rem 0.45rem;
+		border: 1px solid var(--sl-color-gray-4);
+		background: var(--sl-color-gray-6);
+		color: var(--sl-color-white);
+	}
+
+	.chip-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.45rem;
+	}
+
+	.chip {
+		font-size: 0.75rem;
+		line-height: 1;
+		padding: 0.2rem 0.4rem;
+		border: 1px solid var(--sl-color-gray-5);
+		color: var(--sl-color-gray-2);
+	}
+
+	@media (max-width: 60rem) {
+		.layout {
+			grid-template-columns: 1fr;
+		}
+
+		.filters {
+			order: -1;
+		}
+	}
+</style>

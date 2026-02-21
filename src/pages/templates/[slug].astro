@@ -1,0 +1,165 @@
+---
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { getCollection, render, type CollectionEntry } from 'astro:content';
+
+const coverAssets = import.meta.glob('/src/content/templates/**/*', {
+	eager: true,
+	import: 'default',
+	query: '?url',
+}) as Record<string, string>;
+
+const frameworkLabel = {
+	nextjs: 'Next.js',
+	html: 'HTML',
+	wordpress: 'WordPress',
+	other: 'Other',
+} as const;
+
+const slugFromId = (id: string) => {
+	const parts = id.split('/');
+	const fileStem = parts.at(-1) ?? '';
+	const folder = parts.slice(0, -1).join('/');
+	return fileStem === 'entry' && folder ? folder : id;
+};
+
+const coverFromEntry = (entry: CollectionEntry<'templates'>) => {
+	const slug = slugFromId(entry.id);
+	const normalizedCover = entry.data.cover.replace(/^\.\//, '');
+	const coverKey = `/src/content/templates/${slug}/${normalizedCover}`;
+	return coverAssets[coverKey] ?? entry.data.cover;
+};
+
+export async function getStaticPaths() {
+	const entries = await getCollection('templates');
+	return entries.map((entry) => ({
+		params: { slug: slugFromId(entry.id) },
+		props: { entry },
+	}));
+}
+
+const requestedSlug = Astro.params.slug;
+const propsEntry = (Astro.props as { entry?: CollectionEntry<'templates'> }).entry;
+const entry =
+	propsEntry ??
+	(requestedSlug
+		? (await getCollection('templates')).find((candidate) => slugFromId(candidate.id) === requestedSlug)
+		: undefined);
+
+let Content: Awaited<ReturnType<typeof render>>['Content'] | null = null;
+let coverUrl = '';
+let slug = '';
+
+if (!entry) {
+	Astro.response.status = 404;
+} else {
+	({ Content } = await render(entry));
+	coverUrl = coverFromEntry(entry);
+	slug = slugFromId(entry.id);
+}
+---
+
+<StarlightPage frontmatter={{ title: entry?.data.title ?? 'Template not found' }}>
+	{!entry ? (
+		<p>Template not found.</p>
+	) : (
+	<article class="template-entry">
+		<header class="template-header">
+			<h1>{entry.data.title}</h1>
+			<div class="meta-row">
+				<span class="framework-badge">{frameworkLabel[entry.data.framework]}</span>
+				<div class="chip-row" aria-label="Tech stack">
+					{entry.data.tech.map((tech) => (
+						<span class="chip">{tech}</span>
+					))}
+				</div>
+			</div>
+			{entry.data.tags.length > 0 && (
+				<div class="chip-row" aria-label="Tags">
+					{entry.data.tags.map((tag) => (
+						<span class="chip chip--tag">#{tag}</span>
+					))}
+				</div>
+			)}
+			<div class="actions">
+				<a class="download-link sl-link-button" href={`/download/${slug}`}>
+					Download zip
+				</a>
+			</div>
+		</header>
+
+		<img class="cover" src={coverUrl} alt={`${entry.data.title} cover`} loading="eager" />
+
+		<section class="body">
+			{Content && <Content />}
+		</section>
+	</article>
+	)}
+</StarlightPage>
+
+<style>
+	.template-entry {
+		display: grid;
+		gap: 1rem;
+		margin-top: 1rem;
+	}
+
+	.template-header h1 {
+		margin: 0;
+	}
+
+	.meta-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.6rem;
+		margin-top: 0.6rem;
+	}
+
+	.framework-badge {
+		white-space: nowrap;
+		font-size: 0.75rem;
+		padding: 0.2rem 0.45rem;
+		border: 1px solid var(--sl-color-gray-4);
+		background: var(--sl-color-gray-6);
+		color: var(--sl-color-white);
+	}
+
+	.chip-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.45rem;
+	}
+
+	.chip {
+		font-size: 0.75rem;
+		line-height: 1;
+		padding: 0.28rem 0.48rem;
+		border: 1px solid var(--sl-color-gray-5);
+		color: var(--sl-color-gray-2);
+	}
+
+	.chip--tag {
+		background: color-mix(in srgb, var(--sl-color-gray-7), transparent 35%);
+	}
+
+	.cover {
+		display: block;
+		width: 100%;
+		max-height: 28rem;
+		object-fit: cover;
+		border: 1px solid var(--sl-color-gray-5);
+	}
+
+	.body {
+		border-top: 1px solid var(--sl-color-gray-5);
+		padding-top: 1rem;
+	}
+
+	.actions {
+		margin-top: 0.8rem;
+	}
+
+	.download-link {
+		display: inline-flex;
+	}
+</style>
